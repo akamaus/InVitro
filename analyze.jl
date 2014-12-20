@@ -1,7 +1,7 @@
 using HDF5
 
 function read_electrodes()
-    data_path = "/home/dvyal/Shared/2014_03_20_0001.h5"
+    data_path = "./2014_03_20_0001.h5"
     df = h5open(data_path,"r")
     df["Data/Recording_0/AnalogStream/Stream_0/ChannelData"]
 end
@@ -76,3 +76,17 @@ function anomaly_hist(ch)
     plot(x=1:k-1, y=bins)
     bins
 end
+
+function wave_export()
+    channels = read_electrodes()
+    n_channels = length(channels[1,:])
+    for c in (1:n_channels)
+        ch = channels[:, c]
+        ch = reshape(ch, length(ch))
+        file = "ch_$c.wav"
+        print(file)
+        wavwrite(ch, file,Fs=22050,nbits=16)
+    end
+end
+        
+    
