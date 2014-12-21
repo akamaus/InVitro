@@ -88,5 +88,24 @@ function wave_export()
         wavwrite(ch, file,Fs=22050,nbits=16)
     end
 end
-        
-    
+
+function get_snippet(t0, len)
+    channels = read_electrodes()
+    n_channels = size(channels,2)
+    snippet = Array(Int32, len, n_channels)
+    for c in (1:n_channels)
+        snippet[:,c] = channels[t0:t0+len-1,c]
+        @printf("got channel %u\n", c)
+    end
+    snippet
+end
+
+using PyPlot
+
+function draw_snippets(snippets; num_cols=3)
+    for i=1:size(snippets,2)
+        subplot(div(size(snippets,2), num_cols), num_cols, i)
+        title("ch$i")
+        plot(snippets[:,i])
+    end
+end
