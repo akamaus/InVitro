@@ -109,3 +109,28 @@ function draw_snippets(snippets; num_cols=3)
         plot(snippets[:,i])
     end
 end
+
+#
+# DSP
+#
+
+function lowpass_kernel(freq; size = 1000, sample_rate=25000)
+    t = [-size / 2 : size / 2] / sample_rate
+    sinc_samples = sinc(2*freq*t)
+    sinc_samples
+end
+
+function hamming_window(;size=1000)
+    i = [0:size]
+    hamming_w = 0.54 - 0.46 * cos(2 * pi * i / size)
+end
+
+function delta(;size=1000)
+    delta_w = zeros(Float32, size + 1)
+    delta_w[size/2 + 1] = 1.0
+    delta_w
+end
+
+function highpass_kernel(freq;  size = 1000, sample_rate=25000)
+    delta(size=size) - lowpass_kernel(freq, size=size, sample_rate=sample_rate)
+end
