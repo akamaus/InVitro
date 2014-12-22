@@ -6,7 +6,7 @@ function read_electrodes()
     df["Data/Recording_0/AnalogStream/Stream_0/ChannelData"]
 end
 
-function detect_spikes(ch; prec = 2)
+function detect_spikes1(ch; prec = 2)
     mean_p = mean(ch)
     noise = std(ch) * prec
 
@@ -110,27 +110,59 @@ function draw_snippets(snippets; num_cols=3)
     end
 end
 
-#
-# DSP
-#
+using DSP
 
-function lowpass_kernel(freq; size = 1000, sample_rate=25000)
-    t = [-size / 2 : size / 2] / sample_rate
-    sinc_samples = sinc(2*freq*t)
-    sinc_samples
+function band_filter(low, high; fs = 25000)
+    responsetype = Bandpass(low, high; fs=fs)
+    prototype = Butterworth(8)
+    digitalfilter(responsetype, prototype)
 end
 
-function hamming_window(;size=1000)
-    i = [0:size]
-    hamming_w = 0.54 - 0.46 * cos(2 * pi * i / size)
+function arr_disp(xs)
+    vcat(xs[2:end],xs[end])
 end
 
-function delta(;size=1000)
-    delta_w = zeros(Float32, size + 1)
-    delta_w[size/2 + 1] = 1.0
-    delta_w
+typealias SigVal Int32
+typealias Time Int32
+
+function find_minima(xs :: Vector{SigVal}; bound = typemax(SigVal))
+    diffs = arr_disp(xs) - xs
+    signs = arr_disp(diffs) .* diffs
+
+    mins = (Time,SigVal)[]
+
+    for i=2:length(signs)-1
+        if signs[i] < 0
+            if diffs[i] < 0 && xs[i+1] < bound
+                push!(mins,(i,xs[i+1]))
+            end
+        end
+    end
+    return mins
 end
 
-function highpass_kernel(freq;  size = 1000, sample_rate=25000)
-    delta(size=size) - lowpass_kernel(freq, size=size, sample_rate=sample_rate)
+function detect_spikes2(ch; prec = 2)
+    mean_p = mean(ch)
+    noise = std(ch) * prec
+
+    find_minima(ch; bound = mean_p - noise)
+end
+
+function draw_neighs(ch, points; width = 125)
+    xs = if typeof(points) == Vector{Time}
+        points
+    else
+        [p[1] for p in points]
+    end
+
+    n = length(xs)
+    rows = int(ceil(sqrt(n)))
+    cols = int(ceil(n / rows))
+
+    for i = 1:n
+        subplot(rows,cols, i)
+        title("Spike-$(xs[i])")
+        plot(ch[ xs[i] - width : xs[i] + width])
+    end
+    ;
 end
