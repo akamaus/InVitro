@@ -148,6 +148,10 @@ function detect_spikes2(ch; prec = 2)
     find_minima(ch; bound = mean_p - noise)
 end
 
+function slice(xs, i; width = 125)
+    xs[ i - width : i + width]
+end
+
 function draw_neighs(ch, points; width = 125)
     xs = if typeof(points) == Vector{Time}
         points
@@ -162,7 +166,26 @@ function draw_neighs(ch, points; width = 125)
     for i = 1:n
         subplot(rows,cols, i)
         title("Spike-$(xs[i])")
-        plot(ch[ xs[i] - width : xs[i] + width])
+        plot(slice(ch, xs[i], width = width))
     end
     ;
+end
+
+function similarity_matrix(ch, points)
+    n = length(points)
+    matrix = zeros(Float32, n, n)
+
+    xs = if typeof(points) == Vector{Time}
+        points
+    else
+        [p[1] for p in points]
+    end
+
+    for i=1:n
+        for j=1:n
+            matrix[i,j] = cor(slice(ch, xs[i]), slice(ch, xs[j]))
+        end
+    end
+    imshow(matrix)
+    matrix
 end
