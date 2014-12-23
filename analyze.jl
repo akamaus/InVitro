@@ -171,21 +171,39 @@ function draw_neighs(ch, points; width = 125)
     ;
 end
 
-function similarity_matrix(ch, points)
-    n = length(points)
-    matrix = zeros(Float32, n, n)
-
+function similarity_matrix(ch, points; F=square_dist)
     xs = if typeof(points) == Vector{Time}
         points
     else
         [p[1] for p in points]
     end
 
-    for i=1:n
-        for j=1:n
-            matrix[i,j] = cor(slice(ch, xs[i]), slice(ch, xs[j]))
-        end
-    end
+    snippets = [ slice(ch, x) for x in xs]
+    matrix = corr_matrix(snippets,F=F)
     imshow(matrix)
     matrix
 end
+
+function corr_matrix(mat,F=cor)
+    n = size(mat,2)
+    corrs = zeros(Float32, n, n)
+
+    for i=1:n
+        for j=1:n
+            corrs[i,j] = F(mat[:,i],mat[:,j])
+        end
+    end
+    imshow(corrs)
+    corrs
+end
+
+function square_dist(sig1, sig2)
+    sqrt(sum((sig1 .- sig2) .^ 2))
+end
+
+function detect_dead_electrodes(snippet)
+    corrs = corr_matrix(snippet)
+    sum_corrs = sum(corrs,1)
+    dead = find(x->abs(x - mean(sum_corrs)) > std(sum_corrs), sum_corrs)
+end
+    
