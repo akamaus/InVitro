@@ -141,6 +141,22 @@ function find_minima(xs :: Vector{SigVal}; bound = typemax(SigVal))
     return mins
 end
 
+function find_maxima{T <: Real}(xs :: Vector{T}; bound = typemin(SigVal))
+    diffs = arr_disp(xs) - xs
+    signs = arr_disp(diffs) .* diffs
+
+    maxs = (Time,T)[]
+
+    for i=2:length(signs)-1
+        if signs[i] < 0
+            if diffs[i] > 0 && xs[i+1] > bound
+                push!(maxs,(i,xs[i+1]))
+            end
+        end
+    end
+    return maxs
+end
+
 function detect_spikes2(ch; prec = 2)
     mean_p = mean(ch)
     noise = std(ch) * prec
@@ -212,3 +228,76 @@ function detect_dead_electrodes(snippet)
     dead = find(x->abs(x - mean(sum_corrs)) > std(sum_corrs), sum_corrs)
 end
 
+function energy(sig)
+    sum(sig .^2)
+end
+
+function downsample(signal, block; F=mean)
+    d_size = div(length(signal), block)
+    low_res = Array(Float64, d_size)
+    for i=1:d_size
+        low_res[i] = F(signal[1 + block*(i-1) : block*i])
+    end
+    low_res
+end
+
+function enlarge_while(xs, i :: Time, P)
+    local a,b :: Time
+    a = i
+    b = i
+
+    while a > 1 && P(xs[a])
+        a -= 1
+    end
+
+    while b < length(xs) && P(xs[b])
+        b += 1
+    end
+    (a,b)
+end
+
+function grow_intervals{T}(small_ints :: Vector{(T, T)})
+    big_ints = (T, T)[]
+    i=1
+    local a,b
+    while i <= length(small_ints)
+        a,b = small_ints[i]
+        i += 1
+        while i <= length(small_ints)
+            x1,x2 = small_ints[i]
+            grew = false
+            if b+1 >= x1
+                a = min(a,x1)
+                b = max(b,x2)
+                grew = true
+            end
+            if !grew
+                push!(big_ints,(a,b))
+                break
+            end
+            i += 1
+        end
+    end
+    push!(big_ints,(a,b))
+
+    big_ints
+end
+
+
+function find_energy_maxima(ch)
+    block = 100
+    low_peak = 0.01
+    peak_foot = 0.1
+
+    ch_energy = downsample(ch, block, F=energy)
+    low_peak_bound = maximum(ch_energy) * low_peak
+    peaks = find_maxima(ch_energy, bound = low_peak_bound)
+    hot_elementary_zones = [ enlarge_while(ch_energy, x, v-> v > p * peak_foot) for (x,p) in peaks]
+    hot_zones = grow_intervals(hot_elementary_zones)
+    plot(ch_energy)
+    for (a,b) in hot_zones
+        PyPlot.axvspan(a,b, 0, 0.05, color="red")
+    end
+
+    hot_zones
+end
