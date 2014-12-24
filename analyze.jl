@@ -166,9 +166,14 @@ function draw_neighs(ch, points; width = 125)
     for i = 1:n
         subplot(rows,cols, i)
         title("Spike-$(xs[i])")
-        plot(slice(ch, xs[i], width = width))
+        if isa(ch, Array{Int32,2})
+            for ci in 1:size(ch,2)
+                plot(slice(ch[:,ci], xs[i], width = width))
+            end
+        else
+            plot(slice(ch, xs[i], width = width))
+        end
     end
-    ;
 end
 
 function similarity_matrix(ch, points; F=square_dist)
@@ -206,4 +211,4 @@ function detect_dead_electrodes(snippet)
     sum_corrs = sum(corrs,1)
     dead = find(x->abs(x - mean(sum_corrs)) > std(sum_corrs), sum_corrs)
 end
-    
+
