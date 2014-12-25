@@ -242,9 +242,8 @@ function downsample(signal, block; F=mean)
 end
 
 function enlarge_while(xs, i :: Time, P)
-    local a,b :: Time
-    a = i
-    b = i
+    a = i :: Time
+    b = int32(i+1) :: Time
 
     while a > 1 && P(xs[a])
         a -= 1
@@ -253,7 +252,7 @@ function enlarge_while(xs, i :: Time, P)
     while b < length(xs) && P(xs[b])
         b += 1
     end
-    (a,b)
+    (int32(a),int32(b))
 end
 
 function grow_intervals{T}(small_ints :: Vector{(T, T)})
@@ -284,20 +283,35 @@ function grow_intervals{T}(small_ints :: Vector{(T, T)})
 end
 
 
-function find_energy_maxima(ch)
-    block = 100
-    low_peak = 0.01
+function find_energy_maxima(ch; block=100, low_peak = 0.01)
     peak_foot = 0.1
 
     ch_energy = downsample(ch, block, F=energy)
     low_peak_bound = maximum(ch_energy) * low_peak
-    peaks = find_maxima(ch_energy, bound = low_peak_bound)
-    hot_elementary_zones = [ enlarge_while(ch_energy, x, v-> v > p * peak_foot) for (x,p) in peaks]
-    hot_zones = grow_intervals(hot_elementary_zones)
+    println("low_peak $low_peak_bound")
+    peaks = find_maxima(ch_energy, bound = low_peak_bound) :: Vector{(Time, Float64)}
+    hot_elementary_zones = [ enlarge_while(ch_energy, x, v-> v > p * peak_foot) for (x,p) in peaks] :: Vector{(Time,Time)}
+    hot_zones = hot_elementary_zones # grow_intervals(hot_elementary_zones)
     plot(ch_energy)
     for (a,b) in hot_zones
         PyPlot.axvspan(a,b, 0, 0.05, color="red")
     end
 
-    hot_zones
+    #hot_zones
+    map(r->scale_range(r,block), hot_zones)
 end
+
+scale_range{T<:Time,K<:Real}(r::(T,T), k::K) = (convert(T,r[1]*k), convert(T,r[2]*k))
+
+function draw_snippets{T}(ch, ranges :: Vector{(T,T)}; num_cols=3, gap = 100)
+    n = length(ranges)
+    for i=1:n
+        subplot(ceil(n/num_cols), num_cols, i)
+        r = ranges[i]
+        l_bound = max(r[1] - gap,1)
+        r_bound = min(r[2] + gap,length(ch))
+        plot(ch[l_bound:r_bound])
+        PyPlot.axvspan(r[1] - l_bound, r_bound-l_bound - min(length(ch) - r[2],gap) , 0, 0.02, color="red")
+    end
+end
+
