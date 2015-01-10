@@ -303,6 +303,7 @@ end
 
 scale_range{T<:Time,K<:Real}(r::(T,T), k::K) = (convert(T,r[1]*k), convert(T,r[2]*k))
 
+# Рисует избранные куски разными графиками
 function draw_snippets{T}(ch, ranges :: Vector{(T,T)}; num_cols=3, gap = 100)
     n = length(ranges)
     for i=1:n
@@ -312,6 +313,59 @@ function draw_snippets{T}(ch, ranges :: Vector{(T,T)}; num_cols=3, gap = 100)
         r_bound = min(r[2] + gap,length(ch))
         plot(ch[l_bound:r_bound])
         PyPlot.axvspan(r[1] - l_bound, r_bound-l_bound - min(length(ch) - r[2],gap) , 0, 0.02, color="red")
+        yield
     end
 end
 
+# помечает избранные куски на одном графике
+function draw_ranges(ch, ranges; color="red")
+    plot(ch)
+    for r in ranges
+        PyPlot.axvspan(r[1], r[2],0, 0.05, color=color)
+    end
+end
+
+# поиск спайков с учетом динамически вычисляемого порога. Он определяется путём выделения заданной доли самых амплитудных точек
+function detect_spikes3(ch; ratio=0.01, prec = 3, draw = false)
+    bound = select(ch, int(ratio * length(ch)))
+    if draw
+        plot(ch)
+        yield
+    end
+    mins = find_minima(ch; bound = bound * prec)
+    if draw
+        for m in mins
+            PyPlot.axvspan(m[1]-1, m[1]+1,0, 0.05, color="red")
+        end
+    end
+    mins
+end
+
+# подсчет межспайковых интервалов
+function calc_isi(spikes :: Vector{Time}; draw = false)
+    intervals = spikes[2:end] .- spikes[1:end-1]
+    if draw
+        plot(sort(intervals))
+    end
+    intervals
+end
+
+function detect_bursts(spikes :: Vector{Time}, max_isi)
+    local i=1, j;
+    bursts = (Time,Time)[]
+    L = length(spikes)
+    while i < L
+        j = i+1
+        while j <= L && (spikes[j] - spikes[i]) / (j - i + 1) < max_isi
+            j += 1
+        end
+        if j > i+1
+            push!(bursts, (spikes[i],spikes[j-1]))
+        end
+        i = j
+    end
+    bursts
+end
+
+#ints = calc_isi(spikes)
+    
