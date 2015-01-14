@@ -89,6 +89,7 @@ function wave_export()
     end
 end
 
+# Возвращает матрицу - срез сигнала по всем электродам во времени [t0..t0+len]
 function get_snippet(t0, len)
     channels = read_electrodes()
     n_channels = size(channels,2)
@@ -282,17 +283,26 @@ function grow_intervals{T}(small_ints :: Vector{(T, T)})
     big_ints
 end
 
-
-function find_energy_maxima(ch; block=100, low_peak = 0.01)
-    peak_foot = 0.1
-
+# Ищет точки с максимальной энергией на загрублённом сигнале, возвращает их окрестности
+function find_energy_maxima(ch; block=100, low_peak = 0.01, draw = false)
     ch_energy = downsample(ch, block, F=energy)
-    low_peak_bound = maximum(ch_energy) * low_peak
+    if draw
+        plot(ch_energy)
+        yield
+    end
+    low_peak_bound = - select( - ch_energy, int(low_peak * length(ch_energy)))
     println("low_peak $low_peak_bound")
     peaks = find_maxima(ch_energy, bound = low_peak_bound) :: Vector{(Time, Float64)}
-    hot_elementary_zones = [ enlarge_while(ch_energy, x, v-> v > p * peak_foot) for (x,p) in peaks] :: Vector{(Time,Time)}
-    hot_zones = hot_elementary_zones # grow_intervals(hot_elementary_zones)
-    plot(ch_energy)
+    if draw
+        for p in peaks
+            PyPlot.axvspan(p[1]-1, p[1]+1,0, 0.05, color="green")
+        end
+    end
+
+    hot_elementary_zones = [ enlarge_while(ch_energy, x, v-> v > low_peak_bound) for (x,p) in peaks] :: Vector{(Time,Time)}
+    hot_zones = grow_intervals(hot_elementary_zones)
+#    return hot_zones
+
     for (a,b) in hot_zones
         PyPlot.axvspan(a,b, 0, 0.05, color="red")
     end
@@ -301,9 +311,46 @@ function find_energy_maxima(ch; block=100, low_peak = 0.01)
     map(r->scale_range(r,block), hot_zones)
 end
 
+function signal_to_noise_ratio(ch; block = 100, low_peak = 0.01, draw = false)
+    ch_energy = downsample(ch, block, F=energy)
+    if draw
+        plot(ch_energy)
+        yield
+    end
+    low_peak_bound = - select( - ch_energy, int(low_peak * length(ch_energy)))
+    if draw
+        axhline(y = low_peak_bound, color = "red")
+        yield
+    end
+    mean_p = - select( - ch_energy, int(length(ch_energy) / 2))
+    if draw
+        axhline(y = mean_p, color = "blue")
+        yield
+    end
+    low_peak_bound / mean_p
+end
+
+function channels_snr(snippet; draw=false)
+    snrs = Float64[]
+    ch_range = 1:size(snippet,2)
+    for ci in ch_range
+        t1 = time()
+        ch = snippet[:, ci]
+        push!(snrs, signal_to_noise_ratio(ch))
+        t2 = time()
+        if t2 - t1 > 1
+            @printf("got snr[%u] = %f\n", ci, snrs[ci])
+        end
+    end
+    if draw
+        bar(ch_range, snrs)
+    end
+    snrs
+end
+
 scale_range{T<:Time,K<:Real}(r::(T,T), k::K) = (convert(T,r[1]*k), convert(T,r[2]*k))
 
-# Рисует избранные куски разными графиками
+# Рисует избранные куски сигнала на разных графиках
 function draw_snippets{T}(ch, ranges :: Vector{(T,T)}; num_cols=3, gap = 100)
     n = length(ranges)
     for i=1:n
@@ -317,11 +364,11 @@ function draw_snippets{T}(ch, ranges :: Vector{(T,T)}; num_cols=3, gap = 100)
     end
 end
 
-# помечает избранные куски на одном графике
-function draw_ranges(ch, ranges; color="red")
+# рисует график, помечает зоны на оси абсцисс
+function draw_ranges(ch, ranges; color="red", height=0.05)
     plot(ch)
     for r in ranges
-        PyPlot.axvspan(r[1], r[2],0, 0.05, color=color)
+        PyPlot.axvspan(r[1], r[2],0, height, color=color)
     end
 end
 
@@ -350,6 +397,7 @@ function calc_isi(spikes :: Vector{Time}; draw = false)
     intervals
 end
 
+# поиск групп событий
 function detect_bursts(spikes :: Vector{Time}, max_isi)
     local i=1, j;
     bursts = (Time,Time)[]
