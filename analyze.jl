@@ -330,22 +330,39 @@ function signal_to_noise_ratio(ch; block = 100, low_peak = 0.01, draw = false)
     low_peak_bound / mean_p
 end
 
-function channels_snr(snippet; draw=false)
-    snrs = Float64[]
+function signal_to_noise_ratio_rude(ch; block = 100, low_peak = 0.01, draw = false)
+    ch_energy = downsample(ch, block, F=energy)
+    if draw
+        plot(ch_energy)
+        yield
+    end
+    low_peak_bound = maximum(ch_energy)
+    if draw
+        axhline(y = low_peak_bound, color = "red")
+        yield
+    end
+    mean_p = minimum(ch_energy)
+    if draw
+        axhline(y = mean_p, color = "blue")
+        yield
+    end
+    low_peak_bound / mean_p
+end
+
+
+function for_each_channel(F, snippet)
+    res = Any[]
     ch_range = 1:size(snippet,2)
     for ci in ch_range
         t1 = time()
         ch = snippet[:, ci]
-        push!(snrs, signal_to_noise_ratio(ch))
+        push!(res, F(ch))
         t2 = time()
         if t2 - t1 > 1
-            @printf("got snr[%u] = %f\n", ci, snrs[ci])
+            @printf("got res[%u] = %s\n", ci, sprint(print, res[ci]))
         end
     end
-    if draw
-        bar(ch_range, snrs)
-    end
-    snrs
+    res
 end
 
 scale_range{T<:Time,K<:Real}(r::(T,T), k::K) = (convert(T,r[1]*k), convert(T,r[2]*k))
