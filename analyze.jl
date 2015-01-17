@@ -6,6 +6,18 @@ function read_electrodes()
     df["Data/Recording_0/AnalogStream/Stream_0/ChannelData"]
 end
 
+using JLD
+function save_electrodes(file = "channels.jld")
+    global channels
+    @save file channels
+end
+
+function load_electrodes(file = "channels.jld")
+    dict = load(file)
+    global channels
+    channels = dict["channels"]
+end
+
 function detect_spikes1(ch; prec = 2)
     mean_p = mean(ch)
     noise = std(ch) * prec
@@ -93,7 +105,10 @@ end
 function get_snippet(t0, len)
     channels = read_electrodes()
     n_channels = size(channels,2)
-    snippet = Array(Int32, len, n_channels)
+    if len == 0
+        len = size(channels,1)
+    end
+    snippet = Array(SigVal, len, n_channels)
     for c in (1:n_channels)
         snippet[:,c] = channels[t0:t0+len-1,c]
         @printf("got channel %u\n", c)
@@ -115,7 +130,13 @@ using DSP
 
 function band_filter(low, high; fs = 25000)
     responsetype = Bandpass(low, high; fs=fs)
-    prototype = Butterworth(8)
+    prototype = Butterworth(4)
+    digitalfilter(responsetype, prototype)
+end
+
+function hipass_filter(low; fs = 25000)
+    responsetype = Highpass(low; fs=fs)
+    prototype = Butterworth(4)
     digitalfilter(responsetype, prototype)
 end
 
@@ -126,16 +147,21 @@ end
 typealias SigVal Int32
 typealias Time Int32
 
+type Spike
+    time::Time
+    top::SigVal
+end
+
 function find_minima(xs :: Vector{SigVal}; bound = typemax(SigVal))
     diffs = arr_disp(xs) - xs
     signs = arr_disp(diffs) .* diffs
 
-    mins = (Time,SigVal)[]
+    mins = Spike[]
 
     for i=2:length(signs)-1
         if signs[i] < 0
             if diffs[i] < 0 && xs[i+1] < bound
-                push!(mins,(i,xs[i+1]))
+                push!(mins,Spike(i,xs[i+1]))
             end
         end
     end
@@ -172,6 +198,8 @@ end
 function draw_neighs(ch, points; width = 125)
     xs = if typeof(points) == Vector{Time}
         points
+    elseif typeof(points) == Vector{Spike}
+        [p.time for p in points]
     else
         [p[1] for p in points]
     end
@@ -230,7 +258,8 @@ function detect_dead_electrodes(snippet)
 end
 
 function energy(sig)
-    sum(sig .^2)
+    sig0 = sig - mean(sig)
+    sum(sig0 .^2)
 end
 
 function downsample(signal, block; F=mean)
@@ -355,8 +384,8 @@ function for_each_channel(F, snippet)
     ch_range = 1:size(snippet,2)
     for ci in ch_range
         t1 = time()
-        ch = snippet[:, ci]
-        push!(res, F(ch))
+        ch = snippet[:, ci][:]
+        push!(res, F(ci, ch))
         t2 = time()
         if t2 - t1 > 1
             @printf("got res[%u] = %s\n", ci, sprint(print, res[ci]))
@@ -399,38 +428,142 @@ function detect_spikes3(ch; ratio=0.01, prec = 3, draw = false)
     mins = find_minima(ch; bound = bound * prec)
     if draw
         for m in mins
-            PyPlot.axvspan(m[1]-1, m[1]+1,0, 0.05, color="red")
+            PyPlot.axvspan(m.time-1, m.time+1,0, 0.05, color="red")
         end
     end
     mins
 end
 
 # подсчет межспайковых интервалов
-function calc_isi(spikes :: Vector{Time}; draw = false)
-    intervals = spikes[2:end] .- spikes[1:end-1]
+function calc_isi(spikes :: Vector{Spike}; draw = false)
+    spike_times = map(s->s.time, spikes)
+    intervals = spike_times[2:end] .- spike_times[1:end-1]
     if draw
         plot(sort(intervals))
     end
     intervals
 end
 
-# поиск групп событий
-function detect_bursts(spikes :: Vector{Time}, max_isi)
+typealias Channel Int8
+
+# Трейн, последовательность спайков на одном канале
+immutable Train
+    start_time::Time;
+    end_time::Time;
+    num_spikes::Uint;
+    channel::Channel;
+end
+
+function merge(t1 :: Train, t2 :: Train)
+    Train(min(t1.start_time, t2.start_time),
+          max(t2.end_time, t2.end_time),
+          t1.num_spikes + t2.num_spikes,
+          t1.channel == t2.channel ? t1.channel:-1)
+end
+
+import Base.length
+
+function length(t :: Train)
+    t.end_time - t.start_time
+end
+
+function is_intersecting(t1 :: Train, t2 :: Train)
+    length(merge(t1,t2)) < length(t1) + length(t2)
+end
+
+# поиск групп событий на одном канале, граница берется, отступая от минимального межспайкового диапазона
+function detect_trains(spikes :: Vector{Spike}; max_isi_ratio=2, channel=-1 )
+    if length(spikes) < 2
+        return []
+    end
+    isi = calc_isi(spikes)
+    max_isi = select(isi,int(length(isi)/2)) * max_isi_ratio
+    info("isi threshold = $(max_isi)")
+    spike_times = map(s->s.time, spikes)
     local i=1, j;
-    bursts = (Time,Time)[]
+    trains = Train[]
     L = length(spikes)
     while i < L
-        j = i+1
-        while j <= L && (spikes[j] - spikes[i]) / (j - i + 1) < max_isi
+        j = i
+        while j+1 <= L && (spike_times[j+1] - spike_times[j]) < max_isi
             j += 1
         end
-        if j > i+1
-            push!(bursts, (spikes[i],spikes[j-1]))
+        if j > i
+            push!(trains, Train(spike_times[i],spike_times[j],j-i+1, channel))
         end
-        i = j
+        i = j+1
+    end
+    trains
+end
+
+# Пачка, набор трейнов с разных каналов, перекрывающихся по времени
+type Burst
+    trains :: Vector{Train}
+end
+
+# поиск пачек импульсов на множестве каналов
+function detect_bursts(trains, draw = false) # :: Vector{Train})
+    ordered_trains = sort(trains; by=t->t.start_time)
+    L = length(ordered_trains)
+    bursts = Burst[]
+
+    for k=1:L
+        burst = Burst([])
+        envelope = ordered_trains[k]
+        while k <= L && is_intersecting(envelope, ordered_trains[k])
+            push!(burst.trains, ordered_trains[k])
+            envelope = merge(envelope, ordered_trains[k])
+            k += 1
+        end
+        push!(bursts, burst)
+    end
+
+    if draw
+        PyPlot.scatter(map(b->length(b.trains), bursts), map(b->length(reduce(merge, b.trains)), bursts),
+                       s = map(b->sum(map(t->t.num_spikes, b.trains)), bursts),
+                       c= map(b-> mean(map(t->length(t), b.trains)) / length(reduce(merge, b.trains)), bursts),
+                       alpha=0.3)
     end
     bursts
 end
 
-#ints = calc_isi(spikes)
-    
+function map_with_index(F, lst)
+    res = similar(lst, Any, length(lst))
+    for i in 1:length(lst)
+        res[i] = F(i, lst[i])
+    end
+    res
+end
+
+function concat(lst)
+    total = typeof(lst[1])[]
+    for sl in lst
+        total = vcat(total, sl)
+    end
+    total
+end
+
+function burst_analysis()
+    channels = read_electrodes()
+    global spikes
+    spikes = for_each_channel((i,ch)->detect_spikes3(ch), channels)
+    tts = concat( map_with_index((i,ss) -> detect_trains(ss, channel=i), spikes))
+    bbs = detect_bursts(tts)
+end
+
+function draw_burst(b :: Burst; channels = read_electrodes())
+    envelope = reduce(merge, b.trains)
+    burst_start = envelope.start_time
+    burst_end = envelope.end_time
+    L = length(b.trains)
+    for i=1:L
+        T = b.trains[i]
+        subplot(L, 1, i)
+        t1 = int(T.start_time)
+        t2 = int(T.end_time)
+        signal = channels[t1:t2,int(T.channel)][:]
+        PyPlot.plot(t1:t2, signal)
+        PyPlot.axis([burst_start, burst_end, minimum(signal), maximum(signal)])
+        PyPlot.title("channel $(T.channel)")
+    end
+end
